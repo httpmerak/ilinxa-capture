@@ -1,4 +1,3 @@
-
 FROM node:22-slim AS backend-build
 WORKDIR /app
 COPY package*.json ./
@@ -19,9 +18,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CFLAGS="-O2 -march=x86-64 -mtune=generic"
 ENV CXXFLAGS="-O2 -march=x86-64 -mtune=generic"
 ENV SHARP_FORCE_GLOBAL_LIBVIPS=1
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 python3-pip pkg-config curl ca-certificates meson ninja-build libglib2.0-dev libexpat1-dev libjpeg-dev libpng-dev libwebp-dev libtiff-dev libgif-dev libheif-dev libarchive-dev libxml2-dev libexif-dev liblcms2-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential python3 python3-pip pkg-config curl ca-certificates meson ninja-build \
+    fontconfig libfontconfig1-dev \
+    libglib2.0-dev libexpat1-dev libjpeg-dev libpng-dev libwebp-dev libtiff-dev libgif-dev \
+    libheif-dev libarchive-dev libxml2-dev libexif-dev liblcms2-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /tmp
-RUN curl -fL --retry 3 https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz -o vips.tar.xz && tar -xf vips.tar.xz && cd vips-8.18.7 && meson setup build --prefix=/usr/local --buildtype=release -Dintrospection=disabled && meson compile -C build && meson install -C build && ldconfig
+RUN curl -fL --retry 3 https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz -o vips.tar.xz && \
+    tar -xf vips.tar.xz && cd vips-8.18.7 && \
+    meson setup build --prefix=/usr/local --buildtype=release -Dintrospection=disabled && \
+    meson compile -C build && meson install -C build && ldconfig
 RUN pkg-config --modversion vips-cpp
 WORKDIR /app
 COPY package*.json ./
@@ -37,6 +43,8 @@ RUN apt-get update && \
       ffmpeg \
       python3 \
       python3-pip \
+      fontconfig \
+      fonts-dejavu-core \
       libglib2.0-0 \
       libexpat1 \
       libjpeg62-turbo \
@@ -51,6 +59,7 @@ RUN apt-get update && \
       libxml2 \
       libexif12 \
       liblcms2-2 && \
+    fc-cache -f && \
     pip3 install --break-system-packages yt-dlp && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -63,6 +72,7 @@ COPY package*.json ./
 COPY --from=backend-build /app/dist/ dist/
 COPY --from=ui-build /app/ui/dist/ ui/dist/
 RUN node -e "const sharp=require('sharp');sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).png().toBuffer().then(()=>console.log('SHARP RUNTIME OK')).catch(e=>{console.error(e);process.exit(1)})"
+RUN node -e "const sharp=require('sharp');sharp({create:{width:10,height:10,channels:3,background:'#ffffff'}}).composite([{input:Buffer.from('<svg width=\"10\" height=\"10\"><text y=\"8\">test</text></svg>')}]).png().toBuffer().then(()=>console.log('SHARP SVG OK')).catch(e=>{console.error(e);process.exit(1)})"
 RUN mkdir -p /app/data/jobs && chown -R node:node /app/data
 ENV NODE_ENV=production
 ENV UI_DIR=./ui/dist
