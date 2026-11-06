@@ -32,7 +32,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.legacy
           push: true
+          tags: ghcr.io/${{ github.repository_owner }}/ilinxa-capture:1.1-legacy-cpu
           platforms: linux/amd64
-          tags: ghcr.io/${{ github.repository_owner }}/ilinxa-capture:1.0
