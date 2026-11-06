@@ -1,0 +1,51 @@
+
+FROM node:22-slim AS backend-build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY tsconfig.json tsup.config.ts ./
+COPY src/ src/
+RUN npm run build
+
+FROM node:22-slim AS ui-build
+WORKDIR /app/ui
+COPY ui/package*.json ./
+RUN npm ci
+COPY ui/ .
+RUN npm run build
+
+FROM node:22-slim AS legacy-build
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CFLAGS="-O2 -march=x86-64 -mtune=generic"
+ENV CXXFLAGS="-O2 -march=x86-64 -mtune=generic"
+ENV SHARP_FORCE_GLOBAL_LIBVIPS=1
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3 python3-pip pkg-config curl ca-certificates meson ninja-build libglib2.0-dev libexpat1-dev libjpeg-dev libpng-dev libwebp-dev libtiff-dev libgif-dev libheif-dev libarchive-dev libxml2-dev libexif-dev liblcms2-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /tmp
+RUN curl -fL --retry 3 https://github.com/libvips/libvips/releases/download/v8.18.7/vips-8.18.7.tar.xz -o vips.tar.xz && tar -xf vips.tar.xz && cd vips-8.18.7 && meson setup build --prefix=/usr/local --buildtype=release -Dintrospection=disabled && meson compile -C build && meson install -C build && ldconfig
+RUN pkg-config --modversion vips-cpp
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+RUN npm install --no-save --ignore-scripts node-addon-api node-gyp
+RUN npm explore sharp -- npm run build
+RUN node -e "const sharp=require('sharp'); console.log(sharp.versions); sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).png().toBuffer().then(()=>console.log('SHARP BUILD OK')).catch(e=>{console.error(e);process.exit(1)})"
+
+FROM node:22-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip libglib2.0-0 libexpat1 libjpeg62-turbo libpng16-16 libwebp7 libtiff6 libgif7 libheif1 libarchive13 libxml2 libexif12 liblcms2-2 && pip3 install --break-system-packages yt-dlp && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=legacy-build /usr/local/ /usr/local/
+RUN ldconfig
+WORKDIR /app
+COPY --from=legacy-build /app/node_modules/ node_modules/
+COPY package*.json ./
+COPY --from=backend-build /app/dist/ dist/
+COPY --from=ui-build /app/ui/dist/ ui/dist/
+RUN node -e "const sharp=require('sharp');sharp({create:{width:2,height:2,channels:3,background:'#ffffff'}}).png().toBuffer().then(()=>console.log('SHARP RUNTIME OK')).catch(e=>{console.error(e);process.exit(1)})"
+RUN mkdir -p /app/data/jobs && chown -R node:node /app/data
+ENV NODE_ENV=production
+ENV UI_DIR=./ui/dist
+ENV LOCAL_OUTPUT_DIR=/app/data/jobs
+ENV HOST=0.0.0.0
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+CMD ["node", "dist/index.js"]
